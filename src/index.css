@@ -259,8 +259,8 @@ textarea.input { height: auto; min-height: 80px; padding: 10px 12px; resize: ver
   max-height: 90vh;
   overflow-y: auto;
 }
-.modal-panel.lg { max-width: 720px; }
-.modal-panel.xl { max-width: 920px; }
+.modal-panel.lg { max-width: 800px; }
+.modal-panel.xl { max-width: 960px; }
 .modal-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 24px 24px 16px; border-bottom: 1px solid var(--color-border); }
 .modal-body { padding: 24px; }
 .modal-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 16px 24px; border-top: 1px solid var(--color-border); }

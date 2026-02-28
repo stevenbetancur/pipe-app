@@ -4,6 +4,7 @@ import type { PedidoEstado, EstadoEntrega } from '@/types';
 const estadoConfig: Record<PedidoEstado, { label: string; className: string }> = {
   REGISTRADO:         { label: 'Registrado',        className: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' },
   MAQUILA:            { label: 'Maquila',            className: 'bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400' },
+  TRILLADO:           { label: 'En trillado',        className: 'bg-cyan-50 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400' },
   TOSTION:            { label: 'En tostión',         className: 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' },
   PRODUCCION:         { label: 'En producción',      className: 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400' },
   FACTURACION:        { label: 'En facturación',     className: 'bg-pink-50 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400' },

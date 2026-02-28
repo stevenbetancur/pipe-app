@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Plus, Pencil, Loader2, Cog, Wrench, AlertTriangle } from 'lucide-react';
+import type { Resolver } from 'react-hook-form';
 import { maquinasService, type CreateMaquinaPayload, type Maquina } from '@/services/maquinas.service';
 import { toast } from '@/lib/toast';
 import { KpiCard } from '@/components/ui/KpiCard';
@@ -42,8 +43,8 @@ const ESTADO_LABELS: Record<string, string> = {
 const schema = z.object({
   nombre:      z.string().min(2, 'Mínimo 2 caracteres'),
   codigo:      z.string().min(1, 'Código requerido'),
-  proceso:     z.enum(['MAQUILA', 'TOSTION'], { required_error: 'Proceso requerido' }),
-  estado:      z.enum(['ACTIVA', 'MANTENIMIENTO', 'FUERA_SERVICIO']).default('ACTIVA'),
+  proceso:     z.enum(['MAQUILA', 'TOSTION'] as const, { message: 'Proceso requerido' }),
+  estado:      z.enum(['ACTIVA', 'MANTENIMIENTO', 'FUERA_SERVICIO']),
   descripcion: z.string().optional(),
 });
 
@@ -61,7 +62,7 @@ export function MaquinasPage() {
   });
 
   const form = useForm<FormValues>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(schema) as unknown as Resolver<FormValues>,
     defaultValues: { estado: 'ACTIVA' },
   });
 

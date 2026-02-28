@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useForm, type Resolver } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { CheckCheck, Loader2, Package, ChevronRight, Boxes, Truck, Scale } from 'lucide-react';
@@ -18,7 +18,8 @@ import type { Pedido } from '@/types';
 // El proceso se guía por los datos del pedido (detalleEmpaque, formaEntrega)
 // fechaNotificacionFacturacion = hoy (automático) → mueve estado a FACTURACION
 const schema = z.object({
-  proceso:            z.string().min(1, 'Tipo de proceso requerido'),
+  proceso:            z.enum(['A_GRANEL', 'EMPACADO'] as const, { error: 'Tipo de proceso requerido' }),
+  kilosRecibidos:     z.coerce.number().positive('Debe ser mayor a 0').optional().or(z.literal('')),
   entregaFinal:       z.string().min(1, 'Descripción de salida requerida'),
   fechaProcesamiento: z.string().min(1, 'Fecha requerida'),
 });
@@ -57,7 +58,7 @@ export function ProduccionPage() {
   });
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(schema) as unknown as Resolver<FormValues>,
     defaultValues: { fechaProcesamiento: new Date().toISOString().slice(0, 10) },
   });
 
@@ -76,7 +77,8 @@ export function ProduccionPage() {
 
   const openModal = (pedido: Pedido) => {
     reset({
-      proceso: '',
+      proceso: 'A_GRANEL',
+      kilosRecibidos: undefined,
       entregaFinal: sugerirSalida(pedido),
       fechaProcesamiento: new Date().toISOString().slice(0, 10),
     });
@@ -87,7 +89,8 @@ export function ProduccionPage() {
     if (!targetPedido) return;
     mutation.mutate({
       pedidoId: targetPedido.id,
-      proceso: values.proceso,
+      proceso: values.proceso as string,
+      kilosRecibidos: values.kilosRecibidos ? Number(values.kilosRecibidos) : null,
       empaque: targetPedido.detalleEmpaque ?? values.proceso,
       entregaFinal: values.entregaFinal,
       fechaProcesamiento: values.fechaProcesamiento,
@@ -243,6 +246,7 @@ export function ProduccionPage() {
               <div><p className="text-xs text-[var(--color-tx-secondary)]">Cliente</p><p className="font-semibold truncate">{targetPedido.client?.name}</p></div>
               <div><p className="text-xs text-[var(--color-tx-secondary)]">Empaque pedido</p><p className="font-semibold text-purple-600 dark:text-purple-400">{targetPedido.detalleEmpaque ?? '—'}</p></div>
               <div><p className="text-xs text-[var(--color-tx-secondary)]">Forma de entrega</p><p className="font-semibold">{targetPedido.formaEntrega ?? '—'}</p></div>
+              <div><p className="text-xs text-[var(--color-tx-secondary)]">Fecha de entrega</p><p className="font-semibold">{fmt(targetPedido.diaEntrega)}</p></div>
               <div><p className="text-xs text-[var(--color-tx-secondary)]">Notificación facturación</p><p className="font-semibold text-[#00D084]">Hoy — automática</p></div>
             </div>
           )}
@@ -253,17 +257,29 @@ export function ProduccionPage() {
                 {...register('proceso')}
                 placeholder="Seleccionar"
                 options={[
-                  { value: 'MOLIDO', label: 'Molido' },
+                  { value: 'A_GRANEL', label: 'A Granel' },
                   { value: 'EMPACADO', label: 'Empacado' },
-                  { value: 'MOLIDO_EMPACADO', label: 'Molido y empacado' },
                 ]}
                 error={errors.proceso?.message}
+              />
+            </Field>
+
+            <Field label="Kilos recibidos del tostador" error={errors.kilosRecibidos?.message} hint="Kilos con los que inicia producción">
+              <Input
+                type="number"
+                step="0.1"
+                min="0"
+                placeholder="e.g. 95"
+                {...register('kilosRecibidos')}
+                error={errors.kilosRecibidos?.message}
               />
             </Field>
 
             <Field label="Fecha de procesamiento" error={errors.fechaProcesamiento?.message} required>
               <Input type="date" {...register('fechaProcesamiento')} error={errors.fechaProcesamiento?.message} />
             </Field>
+
+            <div />
 
             <Field
               label="Salida / Unidades producidas"
@@ -272,12 +288,17 @@ export function ProduccionPage() {
               hint={targetPedido?.detalleEmpaque ? `Según empaque: ${targetPedido.detalleEmpaque}` : 'Describe el resultado'}
               className="col-span-2"
             >
-              <Input
-                placeholder="Ej: 48 bolsas de 500 g en cajas de 12"
+              <textarea
+                rows={3}
+                placeholder="Ej: 48 bolsas de 500 g selladas en cajas de 12 — lote A"
                 {...register('entregaFinal')}
-                error={errors.entregaFinal?.message}
-                autoFocus
+                className={`input resize-y min-h-[72px]${
+                  errors.entregaFinal ? ' border-red-500 focus:ring-red-500' : ''
+                }`}
               />
+              {errors.entregaFinal && (
+                <p className="text-xs text-red-500 mt-1">{errors.entregaFinal.message}</p>
+              )}
             </Field>
           </div>
 

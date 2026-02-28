@@ -5,28 +5,25 @@ import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Play, CheckCheck, Loader2, Scale, Package, Calendar, ChevronRight } from 'lucide-react';
 import { pedidosService } from '@/services/pedidos.service';
-import { tostionService } from '@/services/tostion.service';
+import { trilladoService } from '@/services/trillado.service';
 import { toast } from '@/lib/toast';
 import { KpiCard } from '@/components/ui/KpiCard';
-import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Modal } from '@/components/ui/Modal';
 import { Field, Input } from '@/components/ui/FormField';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { TableSkeleton } from '@/components/ui/Skeleton';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
-import type { Tostion, Pedido } from '@/types';
+import type { Trillado, Pedido } from '@/types';
 import { cn } from '@/lib/cn';
 
-// Solo se piden los kg + baches + horas — las fechas las asigna el servidor automáticamente
 const finalizarSchema = z.object({
-  kilosExcelso:  z.coerce.number().positive('Debe ser mayor a 0'),
-  kilosTostados: z.coerce.number().positive('Debe ser mayor a 0'),
-  baches:        z.coerce.number().int().positive('Debe ser mayor a 0').optional().or(z.literal('')),
-  horaInicio:    z.string().optional(),
-  horaFin:       z.string().optional(),
-}).refine(d => Number(d.kilosTostados) <= Number(d.kilosExcelso), {
-  message: 'Los kilos tostados no pueden superar los kilos de excelso recibidos',
-  path: ['kilosTostados'],
+  kilosEntrada: z.coerce.number().positive('Debe ser mayor a 0'),
+  kilosSalida:  z.coerce.number().positive('Debe ser mayor a 0'),
+  horaInicio:   z.string().min(4, 'Hora requerida'),
+  horaFin:      z.string().min(4, 'Hora requerida'),
+}).refine(d => d.kilosSalida <= d.kilosEntrada, {
+  message: 'Los kilos de salida no pueden superar los de entrada',
+  path: ['kilosSalida'],
 });
 
 type FinalizarForm = z.infer<typeof finalizarSchema>;
@@ -36,80 +33,81 @@ function fmt(d?: string | null) {
   return new Date(d).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-export function TostionPage() {
+function totalKilosPedido(p: Pedido): number {
+  if (p.detalles && p.detalles.length > 0) {
+    return p.detalles.reduce((s, d) => s + Number(d.kilos), 0);
+  }
+  return Number(p.kilos ?? 0);
+}
+
+export function TriladoPage() {
   const qc = useQueryClient();
   const confirm = useConfirm();
-  const [finalizeTarget, setFinalizeTarget] = useState<Tostion | null>(null);
+  const [finalizeTarget, setFinalizeTarget] = useState<Trillado | null>(null);
 
   const finalizeForm = useForm<FinalizarForm>({
     resolver: zodResolver(finalizarSchema) as unknown as Resolver<FinalizarForm>,
   });
 
   // ── Queries ─────────────────────────────────────────────────
-  // Pedidos en TRILLADO esperando entrar a tostión
+  // Pedidos en REGISTRADO esperando entrar a trillado
   const pendientesQuery = useQuery({
-    queryKey: ['pedidos', { estado: 'TRILLADO' }],
-    queryFn: () => pedidosService.getAll('TRILLADO'),
+    queryKey: ['pedidos', { estado: 'REGISTRADO' }],
+    queryFn: () => pedidosService.getAll('REGISTRADO'),
     staleTime: 20_000,
   });
 
-  // Tostiones activas (sin fechaEntregaProduccion)
+  // Trillados activos (sin fechaEntregaTostion)
   const activosQuery = useQuery({
-    queryKey: ['tostion', 'activos'],
-    queryFn: () => tostionService.getActivos(),
+    queryKey: ['trillado', 'activos'],
+    queryFn: () => trilladoService.getActivos(),
     staleTime: 15_000,
   });
 
   // Historial completo
   const historialQuery = useQuery({
-    queryKey: ['tostion', 'historial'],
-    queryFn: () => tostionService.getAll(),
+    queryKey: ['trillado', 'historial'],
+    queryFn: () => trilladoService.getAll(),
     staleTime: 30_000,
   });
 
   const invalidateAll = () => {
     qc.invalidateQueries({ queryKey: ['pedidos'] });
-    qc.invalidateQueries({ queryKey: ['tostion'] });
+    qc.invalidateQueries({ queryKey: ['trillado'] });
   };
 
   // ── Mutations ───────────────────────────────────────────────
   const iniciarMutation = useMutation({
-    mutationFn: (pedidoId: string) => tostionService.iniciar({ pedidoId }),
-    onSuccess: () => { toast.success('Tostión iniciada — fecha de ingreso registrada'); invalidateAll(); },
+    mutationFn: (pedidoId: string) => trilladoService.iniciar({ pedidoId }),
+    onSuccess: () => { toast.success('Trillado iniciado — fecha de ingreso registrada'); invalidateAll(); },
     onError: (e: { response?: { data?: { message?: string } } }) =>
-      toast.error(e.response?.data?.message ?? 'No fue posible iniciar la tostión'),
+      toast.error(e.response?.data?.message ?? 'No fue posible iniciar el trillado'),
   });
 
   const finalizarMutation = useMutation({
     mutationFn: ({ id, ...rest }: FinalizarForm & { id: string }) =>
-      tostionService.finalizar(id, {
-        kilosExcelso: rest.kilosExcelso as number,
-        kilosTostados: rest.kilosTostados as number,
-        baches: rest.baches ? Number(rest.baches) : null,
-        horaInicio: rest.horaInicio || null,
-        horaFin: rest.horaFin || null,
-      }),
+      trilladoService.finalizar(id, rest),
     onSuccess: () => {
-      toast.success('Tostión finalizada — pedido enviado a Producción');
+      toast.success('Trillado finalizado — pedido enviado a Maquila');
       setFinalizeTarget(null);
       finalizeForm.reset();
       invalidateAll();
     },
     onError: (e: { response?: { data?: { message?: string } } }) =>
-      toast.error(e.response?.data?.message ?? 'No fue posible finalizar la tostión'),
+      toast.error(e.response?.data?.message ?? 'No fue posible finalizar el trillado'),
   });
 
   // ── Stats ───────────────────────────────────────────────────
   const stats = useMemo(() => ({
-    pendientes: pendientesQuery.data?.length ?? 0,
-    enCurso:    activosQuery.data?.length ?? 0,
-    finalizados: (historialQuery.data ?? []).filter(t => t.fechaEntregaProduccion).length,
+    pendientes:  pendientesQuery.data?.length ?? 0,
+    enCurso:     activosQuery.data?.length ?? 0,
+    finalizados: (historialQuery.data ?? []).filter(t => t.fechaEntregaTostion).length,
   }), [pendientesQuery.data, activosQuery.data, historialQuery.data]);
 
   const handleIniciar = async (pedido: Pedido) => {
     const ok = await confirm({
-      title: 'Iniciar tostión',
-      description: `¿Iniciar tostión para el pedido ${pedido.code}? La fecha de ingreso se registrará como hoy.`,
+      title: 'Iniciar trillado',
+      description: `¿Iniciar trillado para el pedido ${pedido.code}? La fecha de ingreso se registrará como hoy.`,
       confirmText: 'Iniciar',
     });
     if (!ok) return;
@@ -121,7 +119,7 @@ export function TostionPage() {
     await finalizarMutation.mutateAsync({ id: finalizeTarget.id, ...values });
   });
 
-  const openFinalize = (t: Tostion) => {
+  const openFinalize = (t: Trillado) => {
     finalizeForm.reset();
     setFinalizeTarget(t);
   };
@@ -131,9 +129,9 @@ export function TostionPage() {
       {/* Header */}
       <div>
         <span className="chip mb-2">Pipeline operativo</span>
-        <h2 className="text-2xl font-bold text-[var(--color-tx-primary)] mt-1">Tostión</h2>
+        <h2 className="text-2xl font-bold text-[var(--color-tx-primary)] mt-1">Trillado</h2>
         <p className="text-sm text-[var(--color-tx-secondary)] mt-1">
-          Toma los pedidos registrados, inicia el proceso y registra los kilos de salida.
+          Toma los pedidos registrados, inicia el proceso de trillado y registra los kilos de salida.
         </p>
       </div>
 
@@ -148,9 +146,9 @@ export function TostionPage() {
       <div className="flex items-center gap-2 text-sm text-[var(--color-tx-secondary)]">
         <span className="font-semibold text-[var(--color-tx-primary)]">REGISTRADO</span>
         <ChevronRight size={14} />
-        <span className="font-semibold text-amber-600">EN TOSTIÓN</span>
+        <span className="font-semibold text-amber-600">EN TRILLADO</span>
         <ChevronRight size={14} />
-        <span className="font-semibold text-purple-600">PRODUCCIÓN</span>
+        <span className="font-semibold text-blue-600">MAQUILA</span>
       </div>
 
       {/* Dos columnas principales */}
@@ -161,7 +159,7 @@ export function TostionPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="section-title">Pedidos en espera</p>
-              <p className="section-subtitle">Estado REGISTRADO — listos para iniciar tostión</p>
+              <p className="section-subtitle">Estado REGISTRADO — listos para iniciar trillado</p>
             </div>
             <span className="badge bg-blue-50 text-blue-600">{stats.pendientes}</span>
           </div>
@@ -184,7 +182,10 @@ export function TostionPage() {
                     <p className="font-mono text-sm font-semibold">{pedido.code}</p>
                     <p className="text-xs text-[var(--color-tx-secondary)] truncate">{pedido.client?.name}</p>
                     <p className="text-xs text-[var(--color-tx-secondary)] mt-0.5">
-                      {pedido.kilos} kg · {pedido.presentacion}
+                      {totalKilosPedido(pedido).toFixed(1)} kg
+                      {pedido.detalles && pedido.detalles.length > 0
+                        ? ` · ${pedido.detalles.map(d => d.presentacion).join(', ')}`
+                        : pedido.presentacion ? ` · ${pedido.presentacion}` : ''}
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -212,7 +213,7 @@ export function TostionPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="section-title">En proceso</p>
-              <p className="section-subtitle">Tostiones activas — pendientes de finalizar</p>
+              <p className="section-subtitle">Trillados activos — pendientes de finalizar</p>
             </div>
             <span className="badge bg-amber-50 text-amber-700">{stats.enCurso}</span>
           </div>
@@ -221,8 +222,8 @@ export function TostionPage() {
             <TableSkeleton rows={3} cols={3} />
           ) : !activosQuery.data?.length ? (
             <EmptyState
-              title="Ninguna tostión activa"
-              description="Inicia una tostión desde la columna de la izquierda."
+              title="Ningún trillado activo"
+              description="Inicia un trillado desde la columna de la izquierda."
             />
           ) : (
             <div className="space-y-2">
@@ -254,9 +255,9 @@ export function TostionPage() {
       </div>
 
       {/* Historial */}
-      {!!historialQuery.data?.filter(t => t.fechaEntregaProduccion).length && (
+      {!!historialQuery.data?.filter(t => t.fechaEntregaTostion).length && (
         <div className="card">
-          <p className="section-title mb-4">Historial de tostiones</p>
+          <p className="section-title mb-4">Historial de trillados</p>
           <div className="table-wrap">
             <table className="table">
               <thead>
@@ -265,36 +266,34 @@ export function TostionPage() {
                   <th>Cliente</th>
                   <th>Fecha ingreso</th>
                   <th>Fecha salida</th>
-                  <th>Kg excelso</th>
-                  <th>Kg tostados</th>
-                  <th>Baches</th>
-                  <th>Horario</th>
+                  <th>Kg entrada</th>
+                  <th>Kg salida</th>
                   <th>Merma</th>
+                  <th>Horario</th>
                 </tr>
               </thead>
               <tbody>
-                {historialQuery.data.filter(t => t.fechaEntregaProduccion).map((t) => {
-                  const merma = t.kilosExcelso && t.kilosTostados
-                    ? ((t.kilosExcelso - t.kilosTostados) / t.kilosExcelso * 100).toFixed(1)
+                {historialQuery.data.filter(t => t.fechaEntregaTostion).map((t) => {
+                  const merma = t.kilosEntrada && t.kilosSalida
+                    ? ((t.kilosEntrada - t.kilosSalida) / t.kilosEntrada * 100).toFixed(1)
                     : null;
                   return (
                     <tr key={t.id}>
                       <td className="font-mono text-xs font-semibold">{t.pedido?.code}</td>
                       <td className="text-[var(--color-tx-secondary)]">{t.pedido?.client?.name ?? '—'}</td>
                       <td>{fmt(t.fechaIngreso)}</td>
-                      <td>{fmt(t.fechaEntregaProduccion)}</td>
-                      <td className="font-semibold">{t.kilosExcelso ?? '—'} kg</td>
-                      <td className="font-semibold">{t.kilosTostados ?? '—'} kg</td>
-                      <td className="text-center">{t.baches ?? '—'}</td>
-                      <td className="text-xs text-[var(--color-tx-secondary)]">
-                        {t.horaInicio && t.horaFin ? `${t.horaInicio} – ${t.horaFin}` : '—'}
-                      </td>
+                      <td>{fmt(t.fechaEntregaTostion)}</td>
+                      <td className="font-semibold">{t.kilosEntrada ?? '—'} kg</td>
+                      <td className="font-semibold">{t.kilosSalida ?? '—'} kg</td>
                       <td>
                         {merma ? (
-                          <span className={cn('badge', Number(merma) > 20 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600')}>
+                          <span className={cn('badge', Number(merma) > 15 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600')}>
                             {merma}%
                           </span>
                         ) : '—'}
+                      </td>
+                      <td className="text-xs text-[var(--color-tx-secondary)]">
+                        {t.horaInicio && t.horaFin ? `${t.horaInicio} – ${t.horaFin}` : '—'}
                       </td>
                     </tr>
                   );
@@ -309,8 +308,8 @@ export function TostionPage() {
       <Modal
         open={!!finalizeTarget}
         onClose={() => { setFinalizeTarget(null); finalizeForm.reset(); }}
-        title="Finalizar tostión"
-        description={`Pedido ${finalizeTarget?.pedido?.code ?? ''} — Ingresa los kg de salida del proceso`}
+        title="Finalizar trillado"
+        description={`Pedido ${finalizeTarget?.pedido?.code ?? ''} — Ingresa los datos del proceso`}
         size="md"
         footer={
           <div className="flex gap-2">
@@ -323,7 +322,7 @@ export function TostionPage() {
               disabled={finalizarMutation.isPending}
             >
               {finalizarMutation.isPending && <Loader2 size={14} className="animate-spin" />}
-              Registrar y enviar a Producción
+              Registrar y enviar a Maquila
             </button>
           </div>
         }
@@ -349,56 +348,43 @@ export function TostionPage() {
 
           <div className="grid grid-cols-2 gap-4">
             <Field
-              label="Kg de excelso recibidos"
-              error={finalizeForm.formState.errors.kilosExcelso?.message}
+              label="Kg entrada (bruto)"
+              error={finalizeForm.formState.errors.kilosEntrada?.message}
               required
-              hint="Kilos que entraron al proceso"
+              hint="Total de kilos que entraron al trillado"
             >
               <Input
                 type="number"
                 step="0.1"
                 min="0"
-                placeholder="e.g. 120"
-                {...finalizeForm.register('kilosExcelso')}
-                error={finalizeForm.formState.errors.kilosExcelso?.message}
+                placeholder="ej. 200"
+                {...finalizeForm.register('kilosEntrada')}
+                error={finalizeForm.formState.errors.kilosEntrada?.message}
                 autoFocus
               />
             </Field>
 
             <Field
-              label="Kg procesados (tostados)"
-              error={finalizeForm.formState.errors.kilosTostados?.message}
+              label="Kg salida (trillado)"
+              error={finalizeForm.formState.errors.kilosSalida?.message}
               required
-              hint="Kilos obtenidos tras la tostión"
+              hint="Kilos obtenidos tras el trillado"
             >
               <Input
                 type="number"
                 step="0.1"
                 min="0"
-                placeholder="e.g. 98"
-                {...finalizeForm.register('kilosTostados')}
-                error={finalizeForm.formState.errors.kilosTostados?.message}
+                placeholder="ej. 160"
+                {...finalizeForm.register('kilosSalida')}
+                error={finalizeForm.formState.errors.kilosSalida?.message}
               />
             </Field>
 
             <Field
-              label="Baches (lotes)"
-              error={finalizeForm.formState.errors.baches?.message}
-              hint="Número de lotes procesados"
+              label="Hora inicio"
+              error={finalizeForm.formState.errors.horaInicio?.message}
+              required
             >
-              <Input
-                type="number"
-                min="1"
-                step="1"
-                placeholder="e.g. 3"
-                {...finalizeForm.register('baches')}
-                error={finalizeForm.formState.errors.baches?.message}
-              />
-            </Field>
-
-            <div />
-
-            <Field label="Hora inicio" error={finalizeForm.formState.errors.horaInicio?.message}>
               <Input
                 type="time"
                 {...finalizeForm.register('horaInicio')}
@@ -406,7 +392,11 @@ export function TostionPage() {
               />
             </Field>
 
-            <Field label="Hora fin" error={finalizeForm.formState.errors.horaFin?.message}>
+            <Field
+              label="Hora fin"
+              error={finalizeForm.formState.errors.horaFin?.message}
+              required
+            >
               <Input
                 type="time"
                 {...finalizeForm.register('horaFin')}
@@ -416,7 +406,8 @@ export function TostionPage() {
           </div>
 
           <p className="text-xs text-[var(--color-tx-secondary)] bg-[var(--color-muted)] rounded-lg p-3">
-            💡 Al confirmar, el pedido pasará automáticamente al módulo de <strong>Producción</strong>.
+            💡 Al confirmar, el pedido pasará automáticamente al módulo de <strong>Maquila</strong>.
+            La merma se calculará automáticamente.
           </p>
         </div>
       </Modal>

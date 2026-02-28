@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm, useFieldArray, Controller } from 'react-hook-form';
+import { useForm, useFieldArray, Controller, type Resolver } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Plus, Pencil, Loader2, Clock, CalendarRange, CheckCircle2, XCircle, Trash2 } from 'lucide-react';
@@ -30,9 +30,9 @@ const detalleSchema = z.object({
 const schema = z.object({
   nombre:         z.string().min(2, 'Mínimo 2 caracteres'),
   descripcion:    z.string().optional(),
-  incluyeSabado:  z.boolean().default(false),
-  incluyeDomingo: z.boolean().default(false),
-  activo:         z.boolean().default(true),
+  incluyeSabado:  z.boolean(),
+  incluyeDomingo: z.boolean(),
+  activo:         z.boolean(),
   detalles:       z.array(detalleSchema).min(1, 'Agrega al menos un día'),
 });
 
@@ -63,7 +63,7 @@ export function HorariosPage() {
   };
 
   const form = useForm<FormValues>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(schema) as unknown as Resolver<FormValues>,
     defaultValues,
   });
 

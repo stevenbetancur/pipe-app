@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, FlaskConical, Factory, FileText,
-  Users, Clock, Cpu, LogOut, Package,
+  Users, Clock, Cpu, LogOut, Package, Scissors,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/store/auth.store';
@@ -25,21 +25,22 @@ const navGroups: NavGroup[] = [
     id: 'pipeline',
     title: 'Flujo de trabajo',
     items: [
-      { to: '/dashboard',  label: 'Dashboard',   icon: <LayoutDashboard size={15} /> },
-      { to: '/maquilas',   label: 'Maquilas',    icon: <Package size={15} /> },
-      { to: '/tostion',    label: 'Tostión',     icon: <FlaskConical size={15} /> },
-      { to: '/produccion', label: 'Producción',  icon: <Factory size={15} /> },
-      { to: '/facturacion',label: 'Facturación', icon: <FileText size={15} /> },
+      { to: '/dashboard',   label: 'Dashboard',   icon: <LayoutDashboard size={15} /> },
+      { to: '/maquilas',    label: 'Maquilas',    icon: <Package size={15} />,      roles: ['admin', 'operario'] },
+      { to: '/trillado',    label: 'Trillado',    icon: <Scissors size={15} />,     roles: ['admin', 'operario'] },
+      { to: '/tostion',     label: 'Tostión',     icon: <FlaskConical size={15} />, roles: ['admin', 'operario'] },
+      { to: '/produccion',  label: 'Producción',  icon: <Factory size={15} />,     roles: ['admin', 'operario'] },
+      { to: '/facturacion', label: 'Facturación', icon: <FileText size={15} />,    roles: ['admin', 'facturacion'] },
     ],
   },
   {
     id: 'admin',
     title: 'Administración',
     items: [
-      { to: '/clientes', label: 'Clientes', icon: <Users size={15} /> },
-      { to: '/horarios', label: 'Horarios', icon: <Clock size={15} />, roles: ['admin'] },
-      { to: '/maquinas', label: 'Máquinas', icon: <Cpu size={15} />, roles: ['admin'] },
-      { to: '/usuarios', label: 'Usuarios', icon: <Users size={15} />, roles: ['admin'] },
+      { to: '/clientes', label: 'Clientes', icon: <Users size={15} />,  roles: ['admin'] },
+      { to: '/horarios', label: 'Horarios', icon: <Clock size={15} />,  roles: ['admin'] },
+      { to: '/maquinas', label: 'Máquinas', icon: <Cpu size={15} />,   roles: ['admin'] },
+      { to: '/usuarios', label: 'Usuarios', icon: <Users size={15} />,  roles: ['admin'] },
     ],
   },
 ];
@@ -134,8 +135,14 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           ))}
         </nav>
 
-        {/* Footer — usuario */}
+        {/* Footer — versión + usuario */}
         <div className="px-4 py-4 border-t border-white/5">
+          {/* Badge de versión */}
+          <div className="flex justify-center mb-3">
+            <span className="text-[10px] font-mono text-white/20 tracking-wider">
+              v{__APP_VERSION__}
+            </span>
+          </div>
           {user && (
             <div className="flex items-center gap-3 px-2 py-2.5 rounded-lg hover:bg-white/5 transition-colors group">
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-white/15 to-white/5 flex items-center justify-center shrink-0 ring-1 ring-white/10">

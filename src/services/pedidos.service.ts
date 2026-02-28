@@ -1,12 +1,17 @@
 import { http } from '@/lib/http';
-import type { Pedido, PedidoEstado, Cliente } from '@/types';
+import type { Pedido, PedidoEstado, Cliente, PresentacionDetalle, TipoCodigo } from '@/types';
+
+export interface PedidoDetallePayload {
+  presentacion: PresentacionDetalle;
+  variedad?: string;
+  kilos: number;
+}
 
 export interface CreatePedidoPayload {
-  code: string;
-  kilos: number;
-  presentacion: 'CPS' | 'EXCELSO';
+  tipoCodigo: TipoCodigo;
+  detalles: PedidoDetallePayload[];
   formaEntrega: 'A_GRANEL' | 'EMPACADO';
-  detalleEmpaque?: string;
+  detalleEmpaque?: string | null;
   diaEntrega: string;
   client: {
     name: string;
@@ -14,6 +19,7 @@ export interface CreatePedidoPayload {
     address: string;
     phone: string;
     email: string;
+    ciudadId?: number | null;
   };
 }
 
@@ -34,6 +40,11 @@ export const pedidosService = {
 
   create: async (payload: CreatePedidoPayload): Promise<Pedido> => {
     const { data } = await http.post<Pedido>('/pedidos', payload);
+    return data;
+  },
+
+  update: async (id: string, payload: Partial<CreatePedidoPayload> & { estado?: PedidoEstado }): Promise<Pedido> => {
+    const { data } = await http.put<Pedido>(`/pedidos/${id}`, payload);
     return data;
   },
 
@@ -63,3 +74,4 @@ export const clientesService = {
     return data;
   },
 };
+

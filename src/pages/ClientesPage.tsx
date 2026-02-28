@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, Loader2 } from 'lucide-react';
-import { useForm } from 'react-hook-form';
+import { useForm, type Resolver } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { clientesService } from '@/services/pedidos.service';
@@ -15,8 +15,8 @@ import type { Cliente } from '@/types';
 const schema = z.object({
   name:       z.string().min(2, 'Nombre requerido'),
   documentId: z.string().min(1, 'Documento requerido'),
-  address:    z.string().optional().default(''),
-  phone:      z.string().optional().default(''),
+  address:    z.string().optional(),
+  phone:      z.string().optional(),
   email:      z.string().email('Email inválido'),
 });
 
@@ -34,7 +34,7 @@ export function ClientesPage() {
   });
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(schema) as unknown as Resolver<FormValues>,
   });
 
   const crear = useMutation({

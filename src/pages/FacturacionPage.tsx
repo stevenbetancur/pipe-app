@@ -1,12 +1,13 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useForm, type Resolver } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Plus, Loader2, CheckCircle2, Truck } from 'lucide-react';
 import { pedidosService } from '@/services/pedidos.service';
 import { facturasService, type CreateFacturaPayload } from '@/services/facturas.service';
 import { toast } from '@/lib/toast';
+import { cn } from '@/lib/cn';
 import { KpiCard } from '@/components/ui/KpiCard';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Modal } from '@/components/ui/Modal';
@@ -15,6 +16,18 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { TableSkeleton } from '@/components/ui/Skeleton';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
 import type { Factura, EstadoEntrega } from '@/types';
+
+const SEMAFORO: Record<EstadoEntrega, string> = {
+  PENDIENTE_ENTREGA:  'bg-red-500',
+  LISTO_PARA_ENTREGA: 'bg-yellow-400',
+  ENTREGADO:          'bg-green-500',
+};
+
+const SEMAFORO_LABEL: Record<EstadoEntrega, string> = {
+  PENDIENTE_ENTREGA:  'Pendiente de entrega',
+  LISTO_PARA_ENTREGA: 'Listo para entrega',
+  ENTREGADO:          'Entregado',
+};
 
 const schema = z.object({
   pedidoId:    z.string().min(1, 'Selecciona un pedido'),
@@ -55,7 +68,7 @@ export function FacturacionPage() {
   });
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(schema) as unknown as Resolver<FormValues>,
     defaultValues: {
       fecha: new Date().toISOString().slice(0, 10),
       estadoEntrega: 'PENDIENTE_ENTREGA',
@@ -102,6 +115,16 @@ export function FacturacionPage() {
       fechaConfirmacionEntrega: values.fechaConfirmacionEntrega || null,
     });
   });
+
+  const handleMarcarListo = async (factura: Factura) => {
+    const ok = await confirm({
+      title: 'Marcar como listo para entrega',
+      description: `¿El pedido ${factura.pedido?.code} está listo para despachar al cliente?`,
+      confirmText: 'Marcar como listo',
+    });
+    if (!ok) return;
+    updateEstado.mutate({ id: factura.id, estado: 'LISTO_PARA_ENTREGA' });
+  };
 
   const handleConfirmarEntrega = async (factura: Factura) => {
     const ok = await confirm({
@@ -191,7 +214,15 @@ export function FacturacionPage() {
                       <td className="max-w-[140px] truncate text-[var(--color-tx-secondary)]">{f.pedido?.client?.name}</td>
                       <td className="text-xs">{fmt(f.fecha)}</td>
                       <td className="tabular-nums font-semibold text-sm">{fmtMoney(Number(f.valorTotal))}</td>
-                      <td><StatusBadge entrega={f.estadoEntrega} /></td>
+                      <td>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={cn('inline-block w-2.5 h-2.5 rounded-full flex-shrink-0', SEMAFORO[f.estadoEntrega])}
+                            title={SEMAFORO_LABEL[f.estadoEntrega]}
+                          />
+                          <StatusBadge entrega={f.estadoEntrega} />
+                        </div>
+                      </td>
                       <td>
                         <button
                           className="btn btn-ghost btn-sm text-xs"
@@ -313,21 +344,29 @@ export function FacturacionPage() {
         title={`Factura ${previewFactura?.numero}`}
         description={`Pedido ${previewFactura?.pedido?.code} · ${previewFactura?.pedido?.client?.name}`}
         footer={
-          previewFactura?.estadoEntrega !== 'ENTREGADO' ? (
-            <div className="flex gap-2">
-              <button className="btn btn-secondary" onClick={() => setPreviewFactura(null)}>Cerrar</button>
+          <div className="flex gap-2">
+            <button className="btn btn-secondary" onClick={() => setPreviewFactura(null)}>Cerrar</button>
+            {previewFactura?.estadoEntrega === 'PENDIENTE_ENTREGA' && (
               <button
-                className="btn btn-primary"
+                className="btn btn-primary gap-1.5"
+                onClick={() => previewFactura && handleMarcarListo(previewFactura)}
+                disabled={updateEstado.isPending}
+              >
+                {updateEstado.isPending ? <Loader2 size={14} className="animate-spin" /> : <Truck size={14} />}
+                Marcar como listo
+              </button>
+            )}
+            {previewFactura?.estadoEntrega === 'LISTO_PARA_ENTREGA' && (
+              <button
+                className="btn btn-primary gap-1.5"
                 onClick={() => previewFactura && handleConfirmarEntrega(previewFactura)}
                 disabled={updateEstado.isPending}
               >
                 {updateEstado.isPending ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
                 Confirmar entrega
               </button>
-            </div>
-          ) : (
-            <button className="btn btn-secondary" onClick={() => setPreviewFactura(null)}>Cerrar</button>
-          )
+            )}
+          </div>
         }
       >
         {previewFactura && (

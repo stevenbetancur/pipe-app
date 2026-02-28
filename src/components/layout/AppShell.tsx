@@ -13,9 +13,6 @@ const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
   '/usuarios':   { title: 'Usuarios',  subtitle: 'Gestión de accesos y roles' },
   '/horarios':   { title: 'Horarios',  subtitle: 'Plantillas de horario operativo' },
   '/maquinas':   { title: 'Máquinas',  subtitle: 'Inventario y estado de maquinaria' },
-  '/usuarios':   { title: 'Usuarios', subtitle: 'Gestión de accesos y roles' },
-  '/horarios':   { title: 'Horarios', subtitle: 'Plantillas de turnos' },
-  '/maquinas':   { title: 'Máquinas', subtitle: 'Asignación de maquinaria' },
 };
 
 export function AppShell() {

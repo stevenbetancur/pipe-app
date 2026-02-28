@@ -9,6 +9,9 @@ export interface CreateTostionPayload {
 export interface FinalizarTostionPayload {
   kilosExcelso: number;
   kilosTostados: number;
+  baches?: number | null;
+  horaInicio?: string | null;
+  horaFin?: string | null;
   fechaEntregaProduccion?: string;
 }
 

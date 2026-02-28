@@ -4,6 +4,7 @@ import type { Produccion } from '@/types';
 export interface CreateProduccionPayload {
   pedidoId: string;
   fechaProcesamiento: string;
+  kilosRecibidos?: number | null;
   proceso: string;
   empaque: string;
   entregaFinal: string;

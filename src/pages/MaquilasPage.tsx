@@ -1,10 +1,11 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useForm, useFieldArray, type Resolver } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Plus, Search, Loader2, UserPlus, X } from 'lucide-react';
+import { Plus, Search, Loader2, UserPlus, X, Trash2, Pencil, User } from 'lucide-react';
 import { pedidosService, clientesService, type CreatePedidoPayload } from '@/services/pedidos.service';
+import { ciudadesService } from '@/services/ciudades.service';
 import { toast } from '@/lib/toast';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { KpiCard } from '@/components/ui/KpiCard';
@@ -13,44 +14,79 @@ import { Field, Input, Select, Textarea } from '@/components/ui/FormField';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { TableSkeleton } from '@/components/ui/Skeleton';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
-import type { Cliente, Pedido } from '@/types';
+import { useAuthStore } from '@/store/auth.store';
+import type { Cliente, Pedido, Ciudad } from '@/types';
 import { cn } from '@/lib/cn';
 
 // ─── Schemas ────────────────────────────────────────────────
+const detalleSchema = z.object({
+  presentacion: z.enum(['CPS', 'EXCELSO', 'HONEY', 'NATURAL'] as const, { message: 'Requerido' }),
+  variedad:     z.string().optional().default(''),
+  kilos:        z.coerce.number().positive('Mayor a 0'),
+});
+
 const pedidoSchema = z.object({
-  code:          z.string().min(1, 'Código requerido'),
-  kilos:         z.coerce.number().positive('Debe ser mayor a 0'),
-  presentacion:  z.enum(['CPS', 'EXCELSO']),
-  formaEntrega:  z.enum(['A_GRANEL', 'EMPACADO']),
-  detalleEmpaque:z.string().optional(),
-  diaEntrega:    z.string().min(1, 'Fecha de entrega requerida'),
+  tipoCodigo:    z.enum(['RPM', 'MPU'] as const, { message: 'Tipo requerido' }),
+  detalles:      z.array(detalleSchema).min(1, 'Agrega al menos una línea'),
+  formaEntrega:  z.enum(['A_GRANEL', 'EMPACADO'] as const),
+  detalleEmpaque:z.string().max(800).optional(),
+  diaEntrega:    z.string().min(1, 'Fecha requerida'),
 });
 
 const clienteSchema = z.object({
   name:       z.string().min(2, 'Nombre requerido'),
   documentId: z.string().min(1, 'Documento requerido'),
-  address:    z.string().optional().default(''),
-  phone:      z.string().optional().default(''),
+  address:    z.string().optional(),
+  phone:      z.string().optional(),
   email:      z.string().email('Email inválido'),
+});
+
+const editSchema = z.object({
+  formaEntrega:   z.enum(['A_GRANEL', 'EMPACADO'] as const),
+  detalleEmpaque: z.string().max(800).optional(),
+  diaEntrega:     z.string().min(1, 'Fecha requerida'),
+  detalles:       z.array(detalleSchema).min(1, 'Agrega al menos una línea'),
 });
 
 type PedidoFormValues  = z.infer<typeof pedidoSchema>;
 type ClienteFormValues = z.infer<typeof clienteSchema>;
+type EditFormValues    = z.infer<typeof editSchema>;
+
+const PRESENTACION_LABELS: Record<string, string> = {
+  CPS: 'CPS',
+  EXCELSO: 'Excelso',
+  HONEY: 'Honey',
+  NATURAL: 'Natural',
+};
 
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function totalKilos(p: Pedido): number {
+  if (p.detalles && p.detalles.length > 0) {
+    return p.detalles.reduce((s, d) => s + Number(d.kilos), 0);
+  }
+  return Number(p.kilos ?? 0);
 }
 
 // ─── Page ────────────────────────────────────────────────────
 export function MaquilasPage() {
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const user = useAuthStore((s) => s.user);
+  const isAdmin = user?.role === 'admin';
 
   const [showNewPedido, setShowNewPedido] = useState(false);
   const [showNewCliente, setShowNewCliente] = useState(false);
+  const [editTarget, setEditTarget] = useState<Pedido | null>(null);
   const [selectedCliente, setSelectedCliente] = useState<Cliente | null>(null);
   const [clienteSearch, setClienteSearch] = useState('');
   const [searchFilter, setSearchFilter] = useState('');
+
+  // Ciudad search state (inside new-client modal)
+  const [ciudadSearch, setCiudadSearch] = useState('');
+  const [selectedCiudad, setSelectedCiudad] = useState<Ciudad | null>(null);
 
   // ── Queries ──────────────────────────────────────────────
   const { data: pedidos, isLoading } = useQuery({
@@ -66,20 +102,44 @@ export function MaquilasPage() {
     staleTime: 10_000,
   });
 
+  const { data: ciudadResults, isFetching: searchingCiudades } = useQuery({
+    queryKey: ['ciudades-search', ciudadSearch],
+    queryFn:  () => ciudadesService.search(ciudadSearch),
+    enabled:  ciudadSearch.length >= 2,
+    staleTime: 60_000,
+  });
+
   // ── Forms ─────────────────────────────────────────────────
   const pedidoForm = useForm<PedidoFormValues>({
-    resolver: zodResolver(pedidoSchema),
+    resolver: zodResolver(pedidoSchema) as unknown as Resolver<PedidoFormValues>,
     defaultValues: {
-      presentacion: 'CPS',
-      formaEntrega: 'A_GRANEL',
-      diaEntrega:   new Date().toISOString().slice(0, 10),
+      tipoCodigo:  'RPM',
+      detalles:    [{ presentacion: 'CPS', variedad: '', kilos: undefined as unknown as number }],
+      formaEntrega:'A_GRANEL',
+      diaEntrega:  new Date().toISOString().slice(0, 10),
     },
   });
 
-  const clienteForm = useForm<ClienteFormValues>({
-    resolver: zodResolver(clienteSchema),
+  const { fields: detalleFields, append: appendDetalle, remove: removeDetalle } = useFieldArray({
+    control: pedidoForm.control,
+    name: 'detalles',
   });
 
+  const clienteForm = useForm<ClienteFormValues>({
+    resolver: zodResolver(clienteSchema) as unknown as Resolver<ClienteFormValues>,
+  });
+
+  const editForm = useForm<EditFormValues>({
+    resolver: zodResolver(editSchema) as unknown as Resolver<EditFormValues>,
+    defaultValues: { formaEntrega: 'A_GRANEL', detalles: [] },
+  });
+
+  const { fields: editFields, append: appendEditDetalle, remove: removeEditDetalle } = useFieldArray({
+    control: editForm.control,
+    name: 'detalles',
+  });
+
+  const watchEditForma = editForm.watch('formaEntrega');
   const watchFormaEntrega = pedidoForm.watch('formaEntrega');
 
   // ── Mutations ─────────────────────────────────────────────
@@ -97,7 +157,8 @@ export function MaquilasPage() {
   });
 
   const crearCliente = useMutation({
-    mutationFn: (payload: Omit<Cliente, 'id'>) => clientesService.create(payload),
+    mutationFn: (payload: Omit<Cliente, 'id'> & { ciudadId?: number | null }) =>
+      clientesService.create(payload),
     onSuccess: (cliente) => {
       toast.success(`Cliente ${cliente.name} registrado`);
       qc.invalidateQueries({ queryKey: ['clientes-search'] });
@@ -105,8 +166,22 @@ export function MaquilasPage() {
       setClienteSearch(cliente.name);
       setShowNewCliente(false);
       clienteForm.reset();
+      setSelectedCiudad(null);
+      setCiudadSearch('');
     },
     onError: () => toast.error('No se pudo registrar el cliente'),
+  });
+
+  const actualizarPedido = useMutation({
+    mutationFn: ({ id, ...payload }: EditFormValues & { id: string }) =>
+      pedidosService.update(id, payload),
+    onSuccess: () => {
+      toast.success('Pedido actualizado correctamente');
+      qc.invalidateQueries({ queryKey: ['pedidos'] });
+      setEditTarget(null);
+      editForm.reset();
+    },
+    onError: () => toast.error('No se pudo actualizar el pedido'),
   });
 
   // ── Submit pedido ─────────────────────────────────────────
@@ -115,20 +190,30 @@ export function MaquilasPage() {
       toast.error('Selecciona o registra un cliente');
       return;
     }
+    const tipoCodigo = values.tipoCodigo;
     const ok = await confirm({
-      title: `Registrar pedido ${values.code}`,
-      description: '¿Confirmas el registro del pedido? Se notificará al cliente.',
+      title: `Registrar pedido ${tipoCodigo}`,
+      description: `¿Confirmas el registro? El código se asignará automáticamente. Se notificará al cliente.`,
       confirmText: 'Registrar',
     });
     if (!ok) return;
     crearPedido.mutate({
-      ...values,
+      tipoCodigo: values.tipoCodigo,
+      detalles: values.detalles.map(d => ({
+        presentacion: d.presentacion,
+        variedad: d.variedad ?? '',
+        kilos: d.kilos,
+      })),
+      formaEntrega: values.formaEntrega,
+      detalleEmpaque: values.detalleEmpaque || null,
+      diaEntrega: values.diaEntrega,
       client: {
         name:       selectedCliente.name,
         documentId: selectedCliente.documentId,
         address:    selectedCliente.address,
         phone:      selectedCliente.phone,
         email:      selectedCliente.email,
+        ciudadId:   selectedCliente.ciudad?.id ?? null,
       },
     });
   });
@@ -140,7 +225,31 @@ export function MaquilasPage() {
       address:    values.address ?? '',
       phone:      values.phone ?? '',
       email:      values.email,
+      ciudadId:   selectedCiudad?.id ?? null,
     });
+  });
+
+  const openEdit = (pedido: Pedido) => {
+    editForm.reset({
+      formaEntrega:   pedido.formaEntrega,
+      detalleEmpaque: pedido.detalleEmpaque ?? '',
+      diaEntrega:     pedido.diaEntrega,
+      detalles: (pedido.detalles ?? []).length > 0
+        ? pedido.detalles!.map(d => ({ presentacion: d.presentacion, variedad: d.variedad ?? '', kilos: Number(d.kilos) }))
+        : [{ presentacion: 'CPS' as const, variedad: '', kilos: undefined as unknown as number }],
+    });
+    setEditTarget(pedido);
+  };
+
+  const onSubmitEdit = editForm.handleSubmit(async (values) => {
+    if (!editTarget) return;
+    const ok = await confirm({
+      title: `Editar pedido ${editTarget.code}`,
+      description: 'Se guardarán los cambios en el pedido.',
+      confirmText: 'Guardar cambios',
+    });
+    if (!ok) return;
+    actualizarPedido.mutate({ id: editTarget.id, ...values });
   });
 
   // ── Stats ─────────────────────────────────────────────────
@@ -162,6 +271,18 @@ export function MaquilasPage() {
         p.client?.name.toLowerCase().includes(q)
     );
   }, [pedidos, searchFilter]);
+
+  const resetNewPedido = useCallback(() => {
+    setShowNewPedido(false);
+    setSelectedCliente(null);
+    setClienteSearch('');
+    pedidoForm.reset({
+      tipoCodigo: 'RPM',
+      detalles: [{ presentacion: 'CPS', variedad: '', kilos: undefined as unknown as number }],
+      formaEntrega: 'A_GRANEL',
+      diaEntrega: new Date().toISOString().slice(0, 10),
+    });
+  }, [pedidoForm]);
 
   // ─────────────────────────────────────────────────────────
   return (
@@ -222,11 +343,12 @@ export function MaquilasPage() {
               <tr>
                 <th>Código</th>
                 <th>Cliente</th>
-                <th>Kg</th>
-                <th>Presentación</th>
+                <th>Total kg</th>
+                <th>Líneas</th>
                 <th>Forma entrega</th>
                 <th>Estado</th>
                 <th>Entrega</th>
+                {isAdmin && <th></th>}
               </tr>
             </thead>
             <tbody>
@@ -236,20 +358,44 @@ export function MaquilasPage() {
                   <td>
                     <div>
                       <p className="font-medium text-[var(--color-tx-primary)]">{p.client?.name}</p>
-                      <p className="text-xs text-[var(--color-tx-secondary)]">{p.client?.email}</p>
+                      <p className="text-xs text-[var(--color-tx-secondary)]">
+                        {p.client?.ciudad
+                          ? `${p.client.ciudad.nombre}, ${p.client.ciudad.departamento}`
+                          : p.client?.email}
+                      </p>
                     </div>
                   </td>
-                  <td className="tabular-nums font-medium">{Number(p.kilos).toFixed(1)} kg</td>
+                  <td className="tabular-nums font-medium">{totalKilos(p).toFixed(1)} kg</td>
                   <td>
-                    <span className="badge bg-[var(--color-muted)] text-[var(--color-tx-secondary)]">
-                      {p.presentacion}
-                    </span>
+                    {p.detalles && p.detalles.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {p.detalles.map((d, i) => (
+                          <span key={i} className="badge bg-[var(--color-muted)] text-[var(--color-tx-secondary)] text-xs">
+                            {PRESENTACION_LABELS[d.presentacion] ?? d.presentacion}
+                            {d.variedad ? ` · ${d.variedad}` : ''}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-[var(--color-tx-secondary)] text-xs">—</span>
+                    )}
                   </td>
                   <td className="text-[var(--color-tx-secondary)]">
                     {p.formaEntrega === 'EMPACADO' ? 'Empacado' : 'A granel'}
                   </td>
                   <td><StatusBadge estado={p.estado} /></td>
                   <td className="text-xs text-[var(--color-tx-secondary)]">{formatDate(p.diaEntrega)}</td>
+                  {isAdmin && (
+                    <td>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => openEdit(p)}
+                        title="Editar pedido"
+                      >
+                        <Pencil size={13} />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -257,16 +403,171 @@ export function MaquilasPage() {
         </div>
       )}
 
+      {/* ── Modal editar pedido (admin) ── */}
+      <Modal
+        open={!!editTarget}
+        onClose={() => { setEditTarget(null); editForm.reset(); }}
+        title={`Editar pedido ${editTarget?.code ?? ''}`}
+        description={`Cliente: ${editTarget?.client?.name ?? ''}`}
+        size="lg"
+        footer={
+          <div className="flex gap-2">
+            <button className="btn btn-secondary" onClick={() => { setEditTarget(null); editForm.reset(); }}>
+              Cancelar
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={onSubmitEdit}
+              disabled={actualizarPedido.isPending}
+            >
+              {actualizarPedido.isPending && <Loader2 size={14} className="animate-spin" />}
+              Guardar cambios
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-6">
+          {/* Tipo + Forma */}
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Forma de entrega" error={editForm.formState.errors.formaEntrega?.message} required>
+              <Select
+                {...editForm.register('formaEntrega')}
+                options={[
+                  { value: 'A_GRANEL', label: 'A granel' },
+                  { value: 'EMPACADO', label: 'Empacado' },
+                ]}
+                error={editForm.formState.errors.formaEntrega?.message}
+              />
+            </Field>
+
+            <Field label="Fecha de entrega" error={editForm.formState.errors.diaEntrega?.message} required>
+              <Input
+                type="date"
+                {...editForm.register('diaEntrega')}
+                error={editForm.formState.errors.diaEntrega?.message}
+              />
+            </Field>
+          </div>
+
+          {/* Líneas de detalle */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[var(--color-tx-secondary)]">
+                Líneas del pedido
+              </p>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => appendEditDetalle({ presentacion: 'CPS', variedad: '', kilos: undefined as unknown as number })}
+              >
+                <Plus size={13} /> Agregar línea
+              </button>
+            </div>
+            {(editForm.formState.errors.detalles as { message?: string })?.message && (
+              <p className="text-xs text-red-500 mb-2">
+                {(editForm.formState.errors.detalles as { message?: string }).message}
+              </p>
+            )}
+
+            <div className="space-y-2">
+              {editFields.map((field, index) => (
+                <div
+                  key={field.id}
+                  className="grid items-end gap-2 p-3 rounded-lg bg-[var(--color-muted)] border border-[var(--color-border)]"
+                  style={{ gridTemplateColumns: '1fr 1fr 100px auto' }}
+                >
+                  <Field
+                    label="Presentación"
+                    error={editForm.formState.errors.detalles?.[index]?.presentacion?.message}
+                    required
+                  >
+                    <Select
+                      {...editForm.register(`detalles.${index}.presentacion`)}
+                      options={[
+                        { value: 'CPS', label: 'CPS' },
+                        { value: 'EXCELSO', label: 'Excelso' },
+                        { value: 'HONEY', label: 'Honey' },
+                        { value: 'NATURAL', label: 'Natural' },
+                      ]}
+                      error={editForm.formState.errors.detalles?.[index]?.presentacion?.message}
+                    />
+                  </Field>
+
+                  <Field label="Variedad">
+                    <Input
+                      placeholder="Ej: Castillo, Caturra…"
+                      {...editForm.register(`detalles.${index}.variedad`)}
+                    />
+                  </Field>
+
+                  <Field
+                    label="Kg"
+                    error={editForm.formState.errors.detalles?.[index]?.kilos?.message}
+                    required
+                  >
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      placeholder="0"
+                      {...editForm.register(`detalles.${index}.kilos`)}
+                      error={editForm.formState.errors.detalles?.[index]?.kilos?.message}
+                    />
+                  </Field>
+
+                  <div className="pb-0.5">
+                    <button
+                      type="button"
+                      className="btn btn-icon btn-ghost text-red-400 hover:text-red-500"
+                      onClick={() => editFields.length > 1 && removeEditDetalle(index)}
+                      disabled={editFields.length === 1}
+                      title="Eliminar línea"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {editFields.length > 0 && (
+              <div className="mt-2 text-right text-xs text-[var(--color-tx-secondary)]">
+                Total:{' '}
+                <span className="font-semibold text-[var(--color-tx-primary)]">
+                  {editForm
+                    .watch('detalles')
+                    .reduce((s, d) => s + (Number(d.kilos) || 0), 0)
+                    .toFixed(1)}{' '}
+                  kg
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Detalle empaque */}
+          {watchEditForma === 'EMPACADO' && (
+            <Field label="Detalle de empaque">
+              <Textarea
+                placeholder="Ej: bolsas 500g, cajas de 24 unidades…"
+                maxLength={800}
+                rows={4}
+                {...editForm.register('detalleEmpaque')}
+              />
+            </Field>
+          )}
+        </div>
+      </Modal>
+
       {/* ── Modal nuevo pedido ── */}
       <Modal
         open={showNewPedido}
-        onClose={() => { setShowNewPedido(false); pedidoForm.reset(); setSelectedCliente(null); setClienteSearch(''); }}
+        onClose={resetNewPedido}
         title="Registrar pedido"
         description="Completa todos los datos del pedido y el cliente."
         size="lg"
         footer={
           <div className="flex gap-2">
-            <button className="btn btn-secondary" onClick={() => setShowNewPedido(false)}>
+            <button className="btn btn-secondary" onClick={resetNewPedido}>
               Cancelar
             </button>
             <button
@@ -299,126 +600,242 @@ export function MaquilasPage() {
 
             {/* Búsqueda de cliente */}
             <div className="relative">
-              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-tx-secondary)]" />
-              <input
-                type="text"
-                className="input pl-8"
-                placeholder="Buscar cliente por nombre…"
-                value={clienteSearch}
-                onChange={(e) => { setClienteSearch(e.target.value); if (selectedCliente) setSelectedCliente(null); }}
-              />
+              {/* Campo */}
+              <div className={`flex items-center gap-2 rounded-lg border bg-[var(--color-surface)] px-3 h-10 transition-colors focus-within:border-[#00D084] focus-within:ring-[3px] focus-within:ring-[rgba(0,208,132,0.18)] ${selectedCliente ? 'border-[#00D084] bg-[var(--color-brand-soft)]' : 'border-[var(--color-border)]'}`}>
+                {searchingClientes
+                  ? <Loader2 size={14} className="text-[#00D084] shrink-0 animate-spin" />
+                  : <Search size={14} className="text-[var(--color-tx-secondary)] shrink-0 pointer-events-none" />
+                }
+                <input
+                  type="text"
+                  className="flex-1 bg-transparent outline-none text-sm text-[var(--color-tx-primary)] placeholder:text-[var(--color-tx-secondary)]/70 min-w-0"
+                  placeholder={selectedCliente ? '' : 'Buscar cliente por nombre…'}
+                  value={selectedCliente ? '' : clienteSearch}
+                  onChange={(e) => { setClienteSearch(e.target.value); if (selectedCliente) setSelectedCliente(null); }}
+                />
+                {(clienteSearch || selectedCliente) && (
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-full p-0.5 text-[var(--color-tx-secondary)] hover:text-[var(--color-tx-primary)] hover:bg-[var(--color-muted)] transition-colors"
+                    onClick={() => { setSelectedCliente(null); setClienteSearch(''); }}
+                    tabIndex={-1}
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+
+              {/* Cliente seleccionado — se muestra dentro del campo */}
+              {selectedCliente && (
+                <div className="absolute inset-y-0 left-9 right-8 flex items-center pointer-events-none">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-[#00D084]/20 text-[#00D084] shrink-0">
+                      <User size={11} />
+                    </span>
+                    <span className="text-sm font-semibold text-[var(--color-tx-primary)] truncate">{selectedCliente.name}</span>
+                    <span className="text-xs text-[var(--color-tx-secondary)] truncate hidden sm:block">· {selectedCliente.documentId}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Dropdown resultados */}
               {clienteSearch && !selectedCliente && (
-                <div className="absolute top-full mt-1 w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-lg z-20 overflow-hidden">
+                <div className="absolute top-full mt-1.5 w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl shadow-xl z-20 overflow-hidden">
                   {searchingClientes ? (
-                    <div className="p-3 text-xs text-[var(--color-tx-secondary)]">Buscando…</div>
+                    <div className="flex items-center gap-2 px-4 py-3 text-xs text-[var(--color-tx-secondary)]">
+                      <Loader2 size={12} className="animate-spin" /> Buscando…
+                    </div>
                   ) : (clienteResults ?? []).length === 0 ? (
-                    <div className="p-3 text-xs text-[var(--color-tx-secondary)]">
-                      Sin resultados.{' '}
-                      <button className="text-[#00D084] font-semibold" onClick={() => setShowNewCliente(true)}>
+                    <div className="px-4 py-3 text-xs text-[var(--color-tx-secondary)]">
+                      Sin resultados para <strong className="text-[var(--color-tx-primary)]">"{clienteSearch}"</strong>.{' '}
+                      <button className="text-[#00D084] font-semibold hover:underline" onClick={() => setShowNewCliente(true)}>
                         Registrar cliente
                       </button>
                     </div>
                   ) : (
-                    (clienteResults ?? []).map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        className="w-full text-left px-4 py-2.5 hover:bg-[var(--color-muted)] transition-colors border-b border-[var(--color-border)] last:border-0"
-                        onClick={() => { setSelectedCliente(c); setClienteSearch(c.name); }}
-                      >
-                        <p className="text-sm font-medium">{c.name}</p>
-                        <p className="text-xs text-[var(--color-tx-secondary)]">{c.email} · {c.documentId}</p>
-                      </button>
-                    ))
+                    <ul>
+                      {(clienteResults ?? []).map((c) => (
+                        <li key={c.id}>
+                          <button
+                            type="button"
+                            className="w-full text-left px-4 py-2.5 flex items-center gap-3 hover:bg-[var(--color-muted)] transition-colors border-b border-[var(--color-border)] last:border-0"
+                            onClick={() => { setSelectedCliente(c); setClienteSearch(c.name); }}
+                          >
+                            <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-[var(--color-muted)] text-[var(--color-tx-secondary)] shrink-0">
+                              <User size={13} />
+                            </span>
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-[var(--color-tx-primary)] truncate">{c.name}</p>
+                              <p className="text-xs text-[var(--color-tx-secondary)] truncate">
+                                {c.documentId}{c.ciudad ? ` · ${c.ciudad.nombre}` : ''}
+                              </p>
+                            </div>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
                   )}
                 </div>
               )}
             </div>
-
-            {/* Cliente seleccionado */}
-            {selectedCliente && (
-              <div className="mt-2 flex items-center justify-between p-3 rounded-lg bg-[var(--color-brand-soft)] border border-[#00D084]/20">
-                <div>
-                  <p className="text-sm font-semibold text-[var(--color-tx-primary)]">{selectedCliente.name}</p>
-                  <p className="text-xs text-[var(--color-tx-secondary)]">{selectedCliente.email} · {selectedCliente.documentId}</p>
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-icon btn-ghost"
-                  onClick={() => { setSelectedCliente(null); setClienteSearch(''); }}
-                >
-                  <X size={13} />
-                </button>
-              </div>
-            )}
           </div>
 
           <hr className="divider" />
 
-          {/* Detalle del pedido */}
+          {/* Tipo de código */}
+          <div className="grid grid-cols-2 gap-4">
+            <Field
+              label="Tipo de pedido"
+              error={pedidoForm.formState.errors.tipoCodigo?.message}
+              required
+            >
+              <Select
+                {...pedidoForm.register('tipoCodigo')}
+                options={[
+                  { value: 'RPM', label: 'RPM — Recepción por maquila' },
+                  { value: 'MPU', label: 'MPU — Maquila por usuario' },
+                ]}
+                error={pedidoForm.formState.errors.tipoCodigo?.message}
+              />
+            </Field>
+
+            <Field
+              label="Forma de entrega"
+              error={pedidoForm.formState.errors.formaEntrega?.message}
+              required
+            >
+              <Select
+                {...pedidoForm.register('formaEntrega')}
+                options={[
+                  { value: 'A_GRANEL', label: 'A granel' },
+                  { value: 'EMPACADO', label: 'Empacado' },
+                ]}
+                error={pedidoForm.formState.errors.formaEntrega?.message}
+              />
+            </Field>
+          </div>
+
+          {/* Líneas de detalle */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-widest text-[var(--color-tx-secondary)] mb-3">
-              Detalle del pedido
-            </p>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Código" error={pedidoForm.formState.errors.code?.message} required className="col-span-2 sm:col-span-1">
-                <Input
-                  placeholder="MQ-2026-001"
-                  {...pedidoForm.register('code')}
-                  error={pedidoForm.formState.errors.code?.message}
-                />
-              </Field>
-
-              <Field label="Kilogramos" error={pedidoForm.formState.errors.kilos?.message} required className="col-span-2 sm:col-span-1">
-                <Input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  placeholder="100"
-                  {...pedidoForm.register('kilos')}
-                  error={pedidoForm.formState.errors.kilos?.message}
-                />
-              </Field>
-
-              <Field label="Presentación" error={pedidoForm.formState.errors.presentacion?.message} required>
-                <Select
-                  {...pedidoForm.register('presentacion')}
-                  options={[
-                    { value: 'CPS', label: 'CPS' },
-                    { value: 'EXCELSO', label: 'Excelso' },
-                  ]}
-                  error={pedidoForm.formState.errors.presentacion?.message}
-                />
-              </Field>
-
-              <Field label="Forma de entrega" error={pedidoForm.formState.errors.formaEntrega?.message} required>
-                <Select
-                  {...pedidoForm.register('formaEntrega')}
-                  options={[
-                    { value: 'A_GRANEL', label: 'A granel' },
-                    { value: 'EMPACADO', label: 'Empacado' },
-                  ]}
-                  error={pedidoForm.formState.errors.formaEntrega?.message}
-                />
-              </Field>
-
-              {watchFormaEntrega === 'EMPACADO' && (
-                <Field label="Detalle de empaque" className="col-span-2">
-                  <Textarea
-                    placeholder="Ej: bolsas 500g, cajas de 24 unidades…"
-                    {...pedidoForm.register('detalleEmpaque')}
-                  />
-                </Field>
-              )}
-
-              <Field label="Fecha de entrega" error={pedidoForm.formState.errors.diaEntrega?.message} required className="col-span-2 sm:col-span-1">
-                <Input
-                  type="date"
-                  {...pedidoForm.register('diaEntrega')}
-                  error={pedidoForm.formState.errors.diaEntrega?.message}
-                />
-              </Field>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold uppercase tracking-widest text-[var(--color-tx-secondary)]">
+                Líneas del pedido
+              </p>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => appendDetalle({ presentacion: 'CPS', variedad: '', kilos: undefined as unknown as number })}
+              >
+                <Plus size={13} /> Agregar línea
+              </button>
             </div>
+            {(pedidoForm.formState.errors.detalles as { message?: string })?.message && (
+              <p className="text-xs text-red-500 mb-2">
+                {(pedidoForm.formState.errors.detalles as { message?: string }).message}
+              </p>
+            )}
+
+            <div className="space-y-2">
+              {detalleFields.map((field, index) => (
+                <div
+                  key={field.id}
+                  className="grid items-end gap-2 p-3 rounded-lg bg-[var(--color-muted)] border border-[var(--color-border)]"
+                  style={{ gridTemplateColumns: '1fr 1fr 100px auto' }}
+                >
+                  <Field
+                    label="Presentación"
+                    error={pedidoForm.formState.errors.detalles?.[index]?.presentacion?.message}
+                    required
+                  >
+                    <Select
+                      {...pedidoForm.register(`detalles.${index}.presentacion`)}
+                      options={[
+                        { value: 'CPS', label: 'CPS' },
+                        { value: 'EXCELSO', label: 'Excelso' },
+                        { value: 'HONEY', label: 'Honey' },
+                        { value: 'NATURAL', label: 'Natural' },
+                      ]}
+                      error={pedidoForm.formState.errors.detalles?.[index]?.presentacion?.message}
+                    />
+                  </Field>
+
+                  <Field label="Variedad">
+                    <Input
+                      placeholder="Ej: Castillo, Caturra…"
+                      {...pedidoForm.register(`detalles.${index}.variedad`)}
+                    />
+                  </Field>
+
+                  <Field
+                    label="Kg"
+                    error={pedidoForm.formState.errors.detalles?.[index]?.kilos?.message}
+                    required
+                  >
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      placeholder="0"
+                      {...pedidoForm.register(`detalles.${index}.kilos`)}
+                      error={pedidoForm.formState.errors.detalles?.[index]?.kilos?.message}
+                    />
+                  </Field>
+
+                  <div className="pb-0.5">
+                    <button
+                      type="button"
+                      className="btn btn-icon btn-ghost text-red-400 hover:text-red-500"
+                      onClick={() => detalleFields.length > 1 && removeDetalle(index)}
+                      disabled={detalleFields.length === 1}
+                      title="Eliminar línea"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Total kilos */}
+            {detalleFields.length > 0 && (
+              <div className="mt-2 text-right text-xs text-[var(--color-tx-secondary)]">
+                Total:{' '}
+                <span className="font-semibold text-[var(--color-tx-primary)]">
+                  {pedidoForm
+                    .watch('detalles')
+                    .reduce((s, d) => s + (Number(d.kilos) || 0), 0)
+                    .toFixed(1)}{' '}
+                  kg
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Empaque + Fecha */}
+          <div className="grid grid-cols-2 gap-4">
+            {watchFormaEntrega === 'EMPACADO' && (
+              <Field label="Detalle de empaque" className="col-span-2">
+                <Textarea
+                  placeholder="Ej: bolsas 500g, cajas de 24 unidades…"
+                  maxLength={800}
+                  rows={4}
+                  {...pedidoForm.register('detalleEmpaque')}
+                />
+              </Field>
+            )}
+
+            <Field
+              label="Fecha de entrega"
+              error={pedidoForm.formState.errors.diaEntrega?.message}
+              required
+              className={cn(watchFormaEntrega === 'EMPACADO' ? 'col-span-2 sm:col-span-1' : 'col-span-2 sm:col-span-1')}
+            >
+              <Input
+                type="date"
+                {...pedidoForm.register('diaEntrega')}
+                error={pedidoForm.formState.errors.diaEntrega?.message}
+              />
+            </Field>
           </div>
         </div>
       </Modal>
@@ -426,21 +843,18 @@ export function MaquilasPage() {
       {/* ── Modal nuevo cliente ── */}
       <Modal
         open={showNewCliente}
-        onClose={() => { setShowNewCliente(false); clienteForm.reset(); }}
+        onClose={() => { setShowNewCliente(false); clienteForm.reset(); setSelectedCiudad(null); setCiudadSearch(''); }}
         title="Registrar cliente"
         description="Ingresa los datos del nuevo cliente."
         size="md"
         footer={
           <div className="flex gap-2">
-            <button className="btn btn-secondary" onClick={() => setShowNewCliente(false)}>
+            <button className="btn btn-secondary" onClick={() => { setShowNewCliente(false); clienteForm.reset(); }}>
               Cancelar
             </button>
             <button
               className="btn btn-primary"
-              onClick={clienteForm.handleSubmit((v) => crearCliente.mutate({
-                name: v.name, documentId: v.documentId,
-                address: v.address ?? '', phone: v.phone ?? '', email: v.email,
-              }))}
+              onClick={onSubmitCliente}
               disabled={crearCliente.isPending}
             >
               {crearCliente.isPending && <Loader2 size={14} className="animate-spin" />}
@@ -488,6 +902,53 @@ export function MaquilasPage() {
               placeholder="Cra. 7 # 32-00, Bogotá"
               {...clienteForm.register('address')}
             />
+          </Field>
+
+          {/* Ciudad combobox */}
+          <Field label="Ciudad" className="col-span-2">
+            <div className="relative">
+              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-tx-secondary)] pointer-events-none" />
+              <input
+                type="text"
+                className="input pl-8"
+                placeholder="Buscar ciudad o departamento…"
+                value={selectedCiudad ? `${selectedCiudad.nombre}, ${selectedCiudad.departamento}` : ciudadSearch}
+                onChange={(e) => {
+                  setCiudadSearch(e.target.value);
+                  if (selectedCiudad) setSelectedCiudad(null);
+                }}
+              />
+              {selectedCiudad && (
+                <button
+                  type="button"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 btn btn-icon btn-ghost btn-xs"
+                  onClick={() => { setSelectedCiudad(null); setCiudadSearch(''); }}
+                >
+                  <X size={12} />
+                </button>
+              )}
+              {ciudadSearch && !selectedCiudad && (
+                <div className="absolute top-full mt-1 w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-lg z-20 max-h-48 overflow-y-auto">
+                  {searchingCiudades ? (
+                    <div className="p-3 text-xs text-[var(--color-tx-secondary)]">Buscando…</div>
+                  ) : (ciudadResults ?? []).length === 0 ? (
+                    <div className="p-3 text-xs text-[var(--color-tx-secondary)]">Sin resultados</div>
+                  ) : (
+                    (ciudadResults ?? []).map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        className="w-full text-left px-4 py-2 hover:bg-[var(--color-muted)] transition-colors border-b border-[var(--color-border)] last:border-0"
+                        onClick={() => { setSelectedCiudad(c); setCiudadSearch(''); }}
+                      >
+                        <p className="text-sm font-medium">{c.nombre}</p>
+                        <p className="text-xs text-[var(--color-tx-secondary)]">{c.departamento}</p>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
           </Field>
         </div>
       </Modal>

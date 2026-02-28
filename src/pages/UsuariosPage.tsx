@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useForm, type Resolver } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Plus, Pencil, Loader2, Users, ShieldCheck, UserCheck } from 'lucide-react';
@@ -24,13 +24,13 @@ type Rol = typeof ROLES[number]['value'];
 const createSchema = z.object({
   name:     z.string().min(2, 'Mínimo 2 caracteres'),
   email:    z.string().email('Correo inválido'),
-  password: z.string().min(6, 'Mínimo 6 caracteres'),
-  role:     z.enum(['admin', 'operario', 'facturacion'], { required_error: 'Rol requerido' }),
-  status:   z.enum(['active', 'inactive']).default('active'),
+  password: z.string().min(8, 'Mínimo 8 caracteres'),
+  role:     z.enum(['admin', 'operario', 'facturacion'] as const, { message: 'Rol requerido' }),
+  status:   z.enum(['active', 'inactive']),
 });
 
 const editSchema = createSchema.extend({
-  password: z.string().min(6, 'Mínimo 6 caracteres').or(z.literal('')).optional(),
+  password: z.string().min(8, 'Mínimo 8 caracteres').or(z.literal('')).optional(),
 });
 
 type CreateForm = z.infer<typeof createSchema>;
@@ -58,12 +58,12 @@ export function UsuariosPage() {
   });
 
   const createForm = useForm<CreateForm>({
-    resolver: zodResolver(createSchema),
+    resolver: zodResolver(createSchema) as unknown as Resolver<CreateForm>,
     defaultValues: { status: 'active' },
   });
 
   const editForm = useForm<EditForm>({
-    resolver: zodResolver(editSchema),
+    resolver: zodResolver(editSchema) as unknown as Resolver<EditForm>,
   });
 
   const createMutation = useMutation({

@@ -45,7 +45,7 @@ interface SelectOption { value: string; label: string; }
 
 export const Select = forwardRef<
   HTMLSelectElement,
-  SelectHTMLAttributes<HTMLSelectElement> & { error?: string; options: SelectOption[]; placeholder?: string }
+  SelectHTMLAttributes<HTMLSelectElement> & { error?: string; options: readonly SelectOption[]; placeholder?: string }
 >(({ className, error, options, placeholder, ...props }, ref) => (
   <div className="relative">
     <select

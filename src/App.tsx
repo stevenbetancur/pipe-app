@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { AppShell } from '@/components/layout/AppShell';
+import { UpdatePrompt } from '@/components/ui/UpdatePrompt';
 import { LoginPage } from '@/pages/LoginPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { MaquilasPage } from '@/pages/MaquilasPage';
@@ -11,6 +12,7 @@ import { ClientesPage } from '@/pages/ClientesPage';
 import { UsuariosPage } from '@/pages/UsuariosPage';
 import { HorariosPage } from '@/pages/HorariosPage';
 import { MaquinasPage } from '@/pages/MaquinasPage';
+import { TriladoPage } from '@/pages/TriladoPage';
 
 function NotFound() {
   return (
@@ -26,7 +28,9 @@ function NotFound() {
 
 export default function App() {
   return (
-    <Routes>
+    <>
+      <UpdatePrompt />
+      <Routes>
       <Route path="/login" element={<LoginPage />} />
 
       <Route element={<ProtectedRoute />}>
@@ -34,6 +38,7 @@ export default function App() {
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard"   element={<DashboardPage />} />
           <Route path="/maquilas"    element={<MaquilasPage />} />
+          <Route path="/trillado"    element={<TriladoPage />} />
           <Route path="/tostion"     element={<TostionPage />} />
           <Route path="/produccion"  element={<ProduccionPage />} />
           <Route path="/facturacion" element={<FacturacionPage />} />
@@ -46,6 +51,7 @@ export default function App() {
       </Route>
 
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
-    </Routes>
+      </Routes>
+    </>
   );
 }
