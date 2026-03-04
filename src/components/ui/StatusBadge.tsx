@@ -43,7 +43,7 @@ export function StatusBadge({ estado, entrega, className }: StatusBadgeProps) {
 
 // Mapa para pipeline visual
 export const ESTADO_ORDER: PedidoEstado[] = [
-  'REGISTRADO', 'MAQUILA', 'TOSTION', 'PRODUCCION', 'FACTURACION', 'LISTO_PARA_ENTREGA', 'ENTREGADO'
+  'MAQUILA', 'TRILLADO', 'TOSTION', 'PRODUCCION', 'FACTURACION', 'LISTO_PARA_ENTREGA', 'ENTREGADO'
 ];
 
 export const ESTADO_LABELS = estadoConfig;

@@ -88,7 +88,7 @@ export function TriladoPage() {
     mutationFn: ({ id, ...rest }: FinalizarForm & { id: string }) =>
       trilladoService.finalizar(id, rest),
     onSuccess: () => {
-      toast.success('Trillado finalizado — pedido enviado a Maquila');
+      toast.success('Trillado finalizado — pedido enviado a Tostión');
       setFinalizeTarget(null);
       finalizeForm.reset();
       invalidateAll();
@@ -120,7 +120,10 @@ export function TriladoPage() {
   });
 
   const openFinalize = (t: Trillado) => {
-    finalizeForm.reset();
+    // Pre-fill kilosEntrada from the pedido's detalles (sum) or fallback to kilos
+    const kilosTotal = (t.pedido?.detalles ?? []).reduce((s, d) => s + Number(d.kilos), 0)
+      || Number(t.pedido?.kilos ?? 0);
+    finalizeForm.reset({ kilosEntrada: kilosTotal > 0 ? kilosTotal : undefined });
     setFinalizeTarget(t);
   };
 
@@ -178,15 +181,28 @@ export function TriladoPage() {
                   key={pedido.id}
                   className="flex items-center justify-between p-3 rounded-lg bg-[var(--color-muted)] gap-3"
                 >
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="font-mono text-sm font-semibold">{pedido.code}</p>
                     <p className="text-xs text-[var(--color-tx-secondary)] truncate">{pedido.client?.name}</p>
-                    <p className="text-xs text-[var(--color-tx-secondary)] mt-0.5">
-                      {totalKilosPedido(pedido).toFixed(1)} kg
-                      {pedido.detalles && pedido.detalles.length > 0
-                        ? ` · ${pedido.detalles.map(d => d.presentacion).join(', ')}`
-                        : pedido.presentacion ? ` · ${pedido.presentacion}` : ''}
-                    </p>
+                    {/* Desglose por lote */}
+                    {pedido.detalles && pedido.detalles.length > 0 ? (
+                      <div className="mt-1 space-y-0.5">
+                        {pedido.detalles.map((d, i) => (
+                          <p key={i} className="text-xs text-[var(--color-tx-secondary)]">
+                            <span className="font-semibold text-[var(--color-tx-primary)]">{Number(d.kilos).toFixed(1)} kg</span>
+                            {' · '}<span className="uppercase">{d.presentacion}</span>
+                            {d.variedad ? <span className="italic"> ({d.variedad})</span> : null}
+                          </p>
+                        ))}
+                        <p className="text-xs font-semibold text-[var(--color-tx-secondary)] pt-0.5 border-t border-[var(--color-border)] mt-0.5">
+                          Total: {totalKilosPedido(pedido).toFixed(1)} kg · {pedido.detalles.length} lote{pedido.detalles.length !== 1 ? 's' : ''}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-[var(--color-tx-secondary)] mt-0.5">
+                        {Number(pedido.kilos).toFixed(1)} kg{pedido.presentacion ? ` · ${pedido.presentacion}` : ''}
+                      </p>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <div className="text-right hidden sm:block">

@@ -6,6 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Play, CheckCheck, Loader2, Scale, Package, Calendar, ChevronRight } from 'lucide-react';
 import { pedidosService } from '@/services/pedidos.service';
 import { tostionService } from '@/services/tostion.service';
+import { trilladoService } from '@/services/trillado.service';
 import { toast } from '@/lib/toast';
 import { KpiCard } from '@/components/ui/KpiCard';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -67,6 +68,19 @@ export function TostionPage() {
     staleTime: 30_000,
   });
 
+  // Trillados finalizados — para obtener kilosSalida por pedido
+  const trilladoHistorialQuery = useQuery({
+    queryKey: ['trillado', 'historial'],
+    queryFn: () => trilladoService.getAll(),
+    staleTime: 30_000,
+  });
+
+  // Retorna los kilosSalida del trillado correspondiente al pedido
+  const getTriladoKilosSalida = (pedidoId: string): number | null =>
+    trilladoHistorialQuery.data?.find(
+      t => t.pedido?.id === pedidoId && t.kilosSalida != null
+    )?.kilosSalida ?? null;
+
   const invalidateAll = () => {
     qc.invalidateQueries({ queryKey: ['pedidos'] });
     qc.invalidateQueries({ queryKey: ['tostion'] });
@@ -122,7 +136,9 @@ export function TostionPage() {
   });
 
   const openFinalize = (t: Tostion) => {
-    finalizeForm.reset();
+    // Pre-fill kilosExcelso from the related trillado's kilosSalida
+    const kilosSalida = t.pedido?.id ? getTriladoKilosSalida(t.pedido.id) : null;
+    finalizeForm.reset({ kilosExcelso: kilosSalida != null ? kilosSalida : undefined });
     setFinalizeTarget(t);
   };
 
@@ -161,7 +177,7 @@ export function TostionPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="section-title">Pedidos en espera</p>
-              <p className="section-subtitle">Estado REGISTRADO — listos para iniciar tostión</p>
+              <p className="section-subtitle">Estado TRILLADO — listos para iniciar tostión</p>
             </div>
             <span className="badge bg-blue-50 text-blue-600">{stats.pendientes}</span>
           </div>
@@ -180,12 +196,33 @@ export function TostionPage() {
                   key={pedido.id}
                   className="flex items-center justify-between p-3 rounded-lg bg-[var(--color-muted)] gap-3"
                 >
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="font-mono text-sm font-semibold">{pedido.code}</p>
                     <p className="text-xs text-[var(--color-tx-secondary)] truncate">{pedido.client?.name}</p>
-                    <p className="text-xs text-[var(--color-tx-secondary)] mt-0.5">
-                      {pedido.kilos} kg · {pedido.presentacion}
-                    </p>
+                    {/* Desglose por lote */}
+                    {pedido.detalles && pedido.detalles.length > 0 ? (
+                      <div className="mt-1 space-y-0.5">
+                        {pedido.detalles.map((d, i) => (
+                          <p key={i} className="text-xs text-[var(--color-tx-secondary)]">
+                            <span className="font-semibold text-[var(--color-tx-primary)]">{Number(d.kilos).toFixed(1)} kg</span>
+                            {' · '}<span className="uppercase">{d.presentacion}</span>
+                            {d.variedad ? <span className="italic"> ({d.variedad})</span> : null}
+                          </p>
+                        ))}
+                        <p className="text-xs font-semibold text-[var(--color-tx-secondary)] pt-0.5 border-t border-[var(--color-border)] mt-0.5">
+                          {getTriladoKilosSalida(pedido.id) != null
+                            ? `${Number(getTriladoKilosSalida(pedido.id)).toFixed(1)} kg excelso (trillado) · ${pedido.detalles.length} lote${pedido.detalles.length !== 1 ? 's' : ''}`
+                            : `Total: ${Number(pedido.kilos).toFixed(1)} kg · ${pedido.detalles.length} lote${pedido.detalles.length !== 1 ? 's' : ''}`}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-[var(--color-tx-secondary)] mt-0.5">
+                        {getTriladoKilosSalida(pedido.id) != null
+                          ? `${Number(getTriladoKilosSalida(pedido.id)).toFixed(1)} kg excelso (trillado)`
+                          : `${Number(pedido.kilos).toFixed(1)} kg`}
+                        {pedido.presentacion ? ` · ${pedido.presentacion}` : ''}
+                      </p>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <div className="text-right hidden sm:block">

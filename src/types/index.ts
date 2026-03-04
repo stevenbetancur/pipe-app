@@ -76,7 +76,7 @@ export interface Trillado {
   horaFin: string | null;
   fechaEntregaTostion: string | null;
   auditoria: Record<string, unknown> | null;
-  pedido: Pick<Pedido, 'id' | 'code' | 'client'>;
+  pedido: Pick<Pedido, 'id' | 'code' | 'client' | 'kilos' | 'detalles'>;
   createdAt: string;
 }
 

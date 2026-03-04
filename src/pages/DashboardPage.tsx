@@ -4,11 +4,10 @@ import { Link } from 'react-router-dom';
 import {
   Package, FlaskConical, Factory, FileText,
   CheckCircle2, ArrowRight, Clock, TrendingUp,
-  Scale, Users2,
+  Scale,
 } from 'lucide-react';
 import { pedidosService } from '@/services/pedidos.service';
-import { tostionService } from '@/services/tostion.service';
-import { produccionService } from '@/services/produccion.service';
+
 import { facturasService } from '@/services/facturas.service';
 import { KpiCard } from '@/components/ui/KpiCard';
 import { StatusBadge, ESTADO_ORDER } from '@/components/ui/StatusBadge';
@@ -29,30 +28,33 @@ function daysUntil(d: string) {
 }
 
 export function DashboardPage() {
-  const pedidosQuery   = useQuery({ queryKey: ['pedidos'],           queryFn: () => pedidosService.getAll(),    staleTime: 30_000 });
-  const tostionQuery   = useQuery({ queryKey: ['tostion','activos'],  queryFn: () => tostionService.getActivos(), staleTime: 30_000 });
-  const produccionQuery= useQuery({ queryKey: ['produccion'],         queryFn: () => produccionService.getAll(), staleTime: 30_000 });
-  const facturasQuery  = useQuery({ queryKey: ['facturas'],           queryFn: () => facturasService.getAll(),   staleTime: 30_000 });
+  const pedidosQuery   = useQuery({ queryKey: ['pedidos'],  queryFn: () => pedidosService.getAll(), staleTime: 30_000 });
+  const facturasQuery  = useQuery({ queryKey: ['facturas'],  queryFn: () => facturasService.getAll(), staleTime: 30_000 });
 
   const pedidos = pedidosQuery.data ?? [];
   const isLoading = pedidosQuery.isLoading;
 
   const counts = useMemo(() => {
+    // Initialize ALL possible states (not just ESTADO_ORDER) to avoid missing counts
+    const allStates: PedidoEstado[] = ['REGISTRADO', 'MAQUILA', 'TRILLADO', 'TOSTION', 'PRODUCCION', 'FACTURACION', 'LISTO_PARA_ENTREGA', 'ENTREGADO'];
     const map = {} as Record<PedidoEstado, number>;
-    ESTADO_ORDER.forEach((e) => (map[e] = 0));
+    allStates.forEach((e) => (map[e] = 0));
     pedidos.forEach((p) => { map[p.estado] = (map[p.estado] ?? 0) + 1; });
     return map;
   }, [pedidos]);
 
-  // KPIs derivados de múltiples fuentes
+  // KPIs — todas las fuentes usan estado del pedido para consistencia con el pipeline
   const kpis = useMemo(() => {
     const activos    = pedidos.filter(p => p.estado !== 'ENTREGADO');
-    const kgTotal    = activos.reduce((s, p) => s + Number(p.kilos ?? 0), 0);
+    // Kg solo de estados productivos activos (MAQUILA→PRODUCCION), excluyendo facturación/entrega
+    const estadosProductivos: PedidoEstado[] = ['MAQUILA', 'TRILLADO', 'TOSTION', 'PRODUCCION'];
+    const kgTotal    = pedidos
+      .filter(p => estadosProductivos.includes(p.estado))
+      .reduce((s, p) => s + Number(p.kilos ?? 0), 0);
     const entregados = pedidos.filter(p => p.estado === 'ENTREGADO').length;
     const facturadas = facturasQuery.data?.length ?? 0;
-    const tostiones  = tostionQuery.data?.length ?? 0;
-    return { activos: activos.length, kgTotal, entregados, facturadas, tostiones };
-  }, [pedidos, facturasQuery.data, tostionQuery.data]);
+    return { activos: activos.length, kgTotal, entregados, facturadas };
+  }, [pedidos, facturasQuery.data]);
 
   const recientes = useMemo(
     () => pedidos.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 8),
@@ -85,10 +87,10 @@ export function DashboardPage() {
 
       {/* KPIs fila 1 — operativos */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KpiCard label="Pedidos activos"    value={isLoading ? '—' : kpis.activos}    icon={<Package size={15} />}       accent="#3B82F6" loading={isLoading} />
-        <KpiCard label="En tostión"         value={tostionQuery.isLoading ? '—' : kpis.tostiones} icon={<FlaskConical size={15} />}  accent="#F59E0B" loading={tostionQuery.isLoading} />
-        <KpiCard label="En producción"      value={isLoading ? '—' : counts['PRODUCCION']}  icon={<Factory size={15} />}        accent="#8B5CF6" loading={isLoading} />
-        <KpiCard label="Listos para entrega" value={isLoading ? '—' : counts['LISTO_PARA_ENTREGA']} icon={<CheckCircle2 size={15} />}  accent="#00D084" loading={isLoading} />
+        <KpiCard label="Pedidos activos"    value={isLoading ? '—' : kpis.activos}                    icon={<Package size={15} />}       accent="#3B82F6" loading={isLoading} />
+        <KpiCard label="En tostión"          value={isLoading ? '—' : counts['TOSTION']}                icon={<FlaskConical size={15} />}   accent="#F59E0B" loading={isLoading} />
+        <KpiCard label="En producción"       value={isLoading ? '—' : counts['PRODUCCION']}             icon={<Factory size={15} />}        accent="#8B5CF6" loading={isLoading} />
+        <KpiCard label="Listos para entrega" value={isLoading ? '—' : counts['LISTO_PARA_ENTREGA']}     icon={<CheckCircle2 size={15} />}   accent="#00D084" loading={isLoading} />
       </div>
 
       {/* KPIs fila 2 — acumulados */}
@@ -96,7 +98,7 @@ export function DashboardPage() {
         <KpiCard label="Kg en proceso"      value={isLoading ? '—' : `${kpis.kgTotal.toFixed(0)} kg`} icon={<Scale size={15} />}          accent="#6366F1" loading={isLoading} />
         <KpiCard label="Entregados total"   value={isLoading ? '—' : kpis.entregados}  icon={<TrendingUp size={15} />}     accent="#10B981" loading={isLoading} />
         <KpiCard label="Facturas emitidas"  value={facturasQuery.isLoading ? '—' : kpis.facturadas} icon={<FileText size={15} />}         accent="#EC4899" loading={facturasQuery.isLoading} />
-        <KpiCard label="Procesos hoy"       value={produccionQuery.isLoading ? '—' : (produccionQuery.data?.filter(p => p.fechaProcesamiento?.startsWith(new Date().toISOString().slice(0,10))).length ?? 0)} icon={<Users2 size={15} />} accent="#F97316" loading={produccionQuery.isLoading} />
+        <KpiCard label="En trillado"        value={isLoading ? '—' : counts['TRILLADO']} icon={<Scale size={15} />}        accent="#06B6D4" loading={isLoading} />
       </div>
 
       {/* Pipeline visual */}

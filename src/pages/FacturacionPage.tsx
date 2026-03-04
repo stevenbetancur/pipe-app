@@ -101,9 +101,9 @@ export function FacturacionPage() {
 
   const onSubmit = handleSubmit(async (values) => {
     const ok = await confirm({
-      title: `Generar factura ${values.numero}`,
-      description: 'Se generará la factura y se notificará automáticamente al cliente.',
-      confirmText: 'Generar factura',
+      title: `Guardar registro ${values.numero}`,
+      description: 'Se guardará el registro de factura y se notificará automáticamente al cliente.',
+      confirmText: 'Guardar registro',
     });
     if (!ok) return;
     crearFactura.mutate({
@@ -280,15 +280,15 @@ export function FacturacionPage() {
       <Modal
         open={showForm}
         onClose={() => { setShowForm(false); reset(); }}
-        title="Generar factura"
-        description="Completa los datos para generar la factura."
+        title="Guardar registro de factura"
+        description="Completa los datos para guardar el registro."
         size="md"
         footer={
           <div className="flex gap-2">
             <button className="btn btn-secondary" onClick={() => setShowForm(false)}>Cancelar</button>
             <button className="btn btn-primary" onClick={onSubmit} disabled={crearFactura.isPending}>
               {crearFactura.isPending && <Loader2 size={14} className="animate-spin" />}
-              Generar factura
+              Guardar registro
             </button>
           </div>
         }

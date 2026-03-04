@@ -6,6 +6,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { CheckCheck, Loader2, Package, ChevronRight, Boxes, Truck, Scale } from 'lucide-react';
 import { pedidosService } from '@/services/pedidos.service';
 import { produccionService, type CreateProduccionPayload } from '@/services/produccion.service';
+import { tostionService } from '@/services/tostion.service';
 import { toast } from '@/lib/toast';
 import { KpiCard } from '@/components/ui/KpiCard';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -57,6 +58,19 @@ export function ProduccionPage() {
     staleTime: 30_000,
   });
 
+  // Tostiones finalizadas — para obtener kilosTostados por pedido
+  const tostionHistorialQuery = useQuery({
+    queryKey: ['tostion', 'historial'],
+    queryFn: () => tostionService.getAll(),
+    staleTime: 30_000,
+  });
+
+  // Retorna los kilosTostados de la tostión correspondiente al pedido
+  const getTostionKilosTostados = (pedidoId: string): number | null =>
+    tostionHistorialQuery.data?.find(
+      t => t.pedido?.id === pedidoId && t.kilosTostados != null
+    )?.kilosTostados ?? null;
+
   const { register, handleSubmit, reset, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema) as unknown as Resolver<FormValues>,
     defaultValues: { fechaProcesamiento: new Date().toISOString().slice(0, 10) },
@@ -76,9 +90,10 @@ export function ProduccionPage() {
   });
 
   const openModal = (pedido: Pedido) => {
+    const kilosTostados = getTostionKilosTostados(pedido.id);
     reset({
       proceso: 'A_GRANEL',
-      kilosRecibidos: undefined,
+      kilosRecibidos: kilosTostados != null ? kilosTostados : undefined,
       entregaFinal: sugerirSalida(pedido),
       fechaProcesamiento: new Date().toISOString().slice(0, 10),
     });
@@ -130,7 +145,7 @@ export function ProduccionPage() {
       <div className="card space-y-4">
         <div>
           <p className="section-title">Lotes en producción</p>
-          <p className="section-subtitle">Selecciona un lote para registrar el proceso de empaque/molido</p>
+          <p className="section-subtitle">Selecciona un lote para iniciar proceso</p>
         </div>
 
         {pedidosQuery.isLoading ? (
@@ -154,7 +169,11 @@ export function ProduccionPage() {
                   <div className="flex items-center gap-2 text-xs">
                     <Scale size={11} className="text-[var(--color-tx-secondary)] shrink-0" />
                     <span className="text-[var(--color-tx-secondary)]">Kilos:</span>
-                    <span className="font-semibold">{Number(pedido.kilos).toFixed(1)} kg</span>
+                    <span className="font-semibold">
+                      {getTostionKilosTostados(pedido.id) != null
+                        ? `${Number(getTostionKilosTostados(pedido.id)).toFixed(1)} kg tostados`
+                        : `${Number(pedido.kilos).toFixed(1)} kg`}
+                    </span>
                   </div>
                   {pedido.presentacion && (
                     <div className="flex items-center gap-2 text-xs">
